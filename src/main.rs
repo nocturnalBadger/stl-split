@@ -1,24 +1,30 @@
 use clap::Parser;
 use std::fs::File;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap, VecDeque};
 use stl::read_stl;
 use std::fs::OpenOptions;
 use ordered_float::OrderedFloat;
+use stl::Triangle;
 
 #[derive(Parser)]
 struct Cli {
     path: std::path::PathBuf,
 
-    #[clap(long="output-folder")]
+    #[clap(long="output-folder", short="o")]
     output_folder: Option<std::path::PathBuf>,
 }
 
-type Point = [OrderedFloat<f32>; 3];
+fn triangles_connected(a: &Triangle, b: &Triangle) -> bool {
+    for p1 in [a.v1, a.v2, a.v3] {
+        for p2 in [b.v1, b.v2, b.v3] {
+            if p1 == p2 {
+                return true
+            }
+        }
+    }
+    return false
+}
 
-
-// stl::Triangle does not implement Copy or Clone even though it probably could
-// This seemed to be the simplest way to get a quick copy of this object
-// There may be a better way
 fn copy_triangle(t: &stl::Triangle) -> stl::Triangle {
     stl::Triangle{
         normal: t.normal,
@@ -38,43 +44,47 @@ fn main() -> Result<(), std::io::Error> {
 
     let stl = read_stl(&mut input_file)?;
 
-    let mut solids: Vec<HashSet<Point>> = vec![];
-    let mut triangles: Vec<Vec<stl::Triangle>> = vec![];
+    let mut graph: Vec<Vec<usize>> = vec![Vec::new(); stl.triangles.len()];
+    let mut visited: Vec<bool> = vec![false; stl.triangles.len()];
+    let mut connected_sets: Vec<Vec<Triangle>> = Vec::new();
 
-    for t in stl.triangles.iter() {
-        // Use OrderedFloat because they can be used in a HashSet
-        let p1 = [OrderedFloat(t.v1[0]), OrderedFloat(t.v1[1]), OrderedFloat(t.v1[2])];
-        let p2 = [OrderedFloat(t.v2[0]), OrderedFloat(t.v2[1]), OrderedFloat(t.v2[2])];
-        let p3 = [OrderedFloat(t.v3[0]), OrderedFloat(t.v3[1]), OrderedFloat(t.v3[2])];
+    // Step 2: Build the graph
+    for (i, triangle1) in stl.triangles.iter().enumerate() {
+        for (j, triangle2) in triangles.iter().enumerate() {
+            if i == j {
+                continue;
+            }
 
-        println!("{:?} {:?} {:?}", p1, p2, p3);
-
-        let mut found = false;
-        for (i, solid) in solids.iter_mut().enumerate() {
-            if solid.get(&p1).is_some() || solid.get(&p2).is_some() || solid.get(&p3).is_some() {
-                // At least one point in the triangle is already attached to this solid.
-                // Add all the points to the list of points.
-                solid.insert(p1);
-                solid.insert(p2);
-                solid.insert(p3);
-
-                triangles[i].push(copy_triangle(t));
-
-                found = true;
-                break;
+            if triangles_connected(triangle1, triangle2) {
+                graph[i].push(j);
+                graph[j].push(i);
             }
         }
-        if !found {
-            println!("Triangle not found in existing solids. Creating new solid");
-            let mut new_solid = HashSet::with_capacity(3);
-            new_solid.insert(p1);
-            new_solid.insert(p2);
-            new_solid.insert(p3);
-            solids.push(new_solid);
+    }
 
-            triangles.push(vec![copy_triangle(t)]);
+    // Step 4: Find connected components using DFS with a stack
+    for (i, triangle) in stl.triangles.iter().enumerate() {
+        if !visited[i] {
+            let mut connected_set: Vec<Triangle> = Vec::new();
+            let mut stack: VecDeque<usize> = VecDeque::new();
+            stack.push_back(i);
+
+            while let Some(current) = stack.pop_back() {
+                visited[current] = true;
+                connected_set.push(copy_triangle(&stl.triangles[current]));
+
+                let neighbors = &graph[current];
+                for neighbor in neighbors.iter() {
+                    if !visited[*neighbor] {
+                        stack.push_back(*neighbor);
+                    }
+                }
+            }
+
+            connected_sets.push(connected_set);
         }
     }
+
 
     let base_filename = args.path.file_stem().unwrap();
     // Use --output-folder flag if provided or fallback to the parent of the input
@@ -82,9 +92,9 @@ fn main() -> Result<(), std::io::Error> {
 
     std::fs::create_dir_all(parent_path.clone())?;
 
-    println!("Found {} separate solids in stl file. Creating new files...", solids.len());
+    println!("Found {} separate solids in stl file. Creating new files...", connected_sets.len());
 
-    for (i, triangle_list) in triangles.into_iter().enumerate() {
+    for (i, triangle_list) in connected_sets.into_iter().enumerate() {
         let new_stl = stl::BinaryStlFile{
             header: stl::BinaryStlHeader{
                 header: stl.header.header.clone(),
