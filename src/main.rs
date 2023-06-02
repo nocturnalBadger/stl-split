@@ -17,6 +17,7 @@ struct Cli {
 type Vertex = [OrderedFloat<f32>; 3];
 
 
+// Convert the f32 points into a hashable type
 fn get_vertices(t: &Triangle) -> [Vertex; 3] {
     return [
         [OrderedFloat(t.v1[0]), OrderedFloat(t.v1[1]), OrderedFloat(t.v1[2])],
@@ -25,19 +26,9 @@ fn get_vertices(t: &Triangle) -> [Vertex; 3] {
     ]
 }
 
-
-
-fn triangles_connected(a: &Triangle, b: &Triangle) -> bool {
-    for p1 in [a.v1, a.v2, a.v3] {
-        for p2 in [b.v1, b.v2, b.v3] {
-            if p1 == p2 {
-                return true
-            }
-        }
-    }
-    return false
-}
-
+// stl::Triangle does not implement Copy or Clone even though it probably could
+// This seemed to be the simplest way to get a quick copy of this object
+// There may be a better way
 fn copy_triangle(t: &stl::Triangle) -> stl::Triangle {
     stl::Triangle{
         normal: t.normal,
@@ -53,7 +44,7 @@ fn find_connected_sets(triangles: &[Triangle]) -> Vec<Vec<Triangle>> {
     let mut visited: HashSet<usize> = HashSet::new();
     let mut connected_sets: Vec<Vec<Triangle>> = Vec::new();
 
-    // Step 2: Build the graph
+    // Build the graph
     for (i, triangle) in triangles.iter().enumerate() {
         for vertex in get_vertices(triangle) {
             vertex_to_triangles
@@ -63,8 +54,8 @@ fn find_connected_sets(triangles: &[Triangle]) -> Vec<Vec<Triangle>> {
         }
     }
 
-    // Step 4: Find connected components using DFS with a stack
-    for (i, triangle) in triangles.iter().enumerate() {
+    // Find connected components using DFS with a stack
+    for (i, _triangle) in triangles.iter().enumerate() {
         if !visited.contains(&i) {
             let mut connected_set: Vec<Triangle> = Vec::new();
             let mut stack: VecDeque<usize> = VecDeque::new();
@@ -106,10 +97,8 @@ fn main() -> Result<(), std::io::Error> {
 
     let stl = read_stl(&mut input_file)?;
 
-    let mut graph: Vec<Vec<usize>> = vec![Vec::new(); stl.triangles.len()];
-    let mut visited: Vec<bool> = vec![false; stl.triangles.len()];
+    // Find the connected solids in the stl file
     let connected_sets = find_connected_sets(&stl.triangles);
-
 
 
     let base_filename = args.path.file_stem().unwrap();
